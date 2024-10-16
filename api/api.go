@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 
@@ -18,20 +17,31 @@ func New() http.Handler {
 	return router
 }
 
-type npmPackageMetaResponse struct {
-	Versions map[string]npmPackageResponse `json:"versions"`
-}
-
-type npmPackageResponse struct {
-	Name         string            `json:"name"`
-	Version      string            `json:"version"`
-	Dependencies map[string]string `json:"dependencies"`
-}
-
 type NpmPackageVersion struct {
 	Name         string                        `json:"name"`
 	Version      string                        `json:"version"`
 	Dependencies map[string]*NpmPackageVersion `json:"dependencies"`
+}
+
+type ErrorResponse struct {
+	StatusCode int
+	Err        error
+}
+
+func (e *ErrorResponse) Error() string {
+	return fmt.Sprintf("StatusCode: %d, Error: %v", e.StatusCode, e.Err)
+}
+
+var converter Converter
+var pack Package
+
+func handleError(w http.ResponseWriter, e error) {
+	println(e.Error())
+	if e, ok := e.(*ErrorResponse); ok {
+		w.WriteHeader(e.StatusCode)
+		return
+	}
+	w.WriteHeader(500)
 }
 
 func packageHandler(w http.ResponseWriter, r *http.Request) {
@@ -41,15 +51,13 @@ func packageHandler(w http.ResponseWriter, r *http.Request) {
 
 	rootPkg := &NpmPackageVersion{Name: pkgName, Dependencies: map[string]*NpmPackageVersion{}}
 	if err := resolveDependencies(rootPkg, pkgVersion); err != nil {
-		println(err.Error())
-		w.WriteHeader(500)
+		handleError(w, err)
 		return
 	}
 
 	stringified, err := json.MarshalIndent(rootPkg, "", "  ")
 	if err != nil {
-		println(err.Error())
-		w.WriteHeader(500)
+		handleError(w, err)
 		return
 	}
 
@@ -61,7 +69,7 @@ func packageHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func resolveDependencies(pkg *NpmPackageVersion, versionConstraint string) error {
-	pkgMeta, err := fetchPackageMeta(pkg.Name)
+	pkgMeta, err := pack.FetchMeta(pkg.Name)
 	if err != nil {
 		return err
 	}
@@ -71,7 +79,7 @@ func resolveDependencies(pkg *NpmPackageVersion, versionConstraint string) error
 	}
 	pkg.Version = concreteVersion
 
-	npmPkg, err := fetchPackage(pkg.Name, pkg.Version)
+	npmPkg, err := pack.FetchPackage(pkg.Name, pkg.Version)
 	if err != nil {
 		return err
 	}
@@ -85,7 +93,7 @@ func resolveDependencies(pkg *NpmPackageVersion, versionConstraint string) error
 	return nil
 }
 
-func highestCompatibleVersion(constraintStr string, versions *npmPackageMetaResponse) (string, error) {
+func highestCompatibleVersion(constraintStr string, versions *NpmPackageMetaResponse) (string, error) {
 	constraint, err := semver.NewConstraint(constraintStr)
 	if err != nil {
 		return "", err
@@ -93,12 +101,12 @@ func highestCompatibleVersion(constraintStr string, versions *npmPackageMetaResp
 	filtered := filterCompatibleVersions(constraint, versions)
 	sort.Sort(filtered)
 	if len(filtered) == 0 {
-		return "", errors.New("no compatible versions found")
+		return "", &ErrorResponse{StatusCode: 404, Err: errors.New("no compatible versions found")}
 	}
 	return filtered[len(filtered)-1].String(), nil
 }
 
-func filterCompatibleVersions(constraint *semver.Constraints, pkgMeta *npmPackageMetaResponse) semver.Collection {
+func filterCompatibleVersions(constraint *semver.Constraints, pkgMeta *NpmPackageMetaResponse) semver.Collection {
 	var compatible semver.Collection
 	for version := range pkgMeta.Versions {
 		semVer, err := semver.NewVersion(version)
@@ -110,41 +118,4 @@ func filterCompatibleVersions(constraint *semver.Constraints, pkgMeta *npmPackag
 		}
 	}
 	return compatible
-}
-
-func fetchPackage(name, version string) (*npmPackageResponse, error) {
-	resp, err := http.Get(fmt.Sprintf("https://registry.npmjs.org/%s/%s", name, version))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var parsed npmPackageResponse
-	_ = json.Unmarshal(body, &parsed)
-	return &parsed, nil
-}
-
-func fetchPackageMeta(p string) (*npmPackageMetaResponse, error) {
-	resp, err := http.Get(fmt.Sprintf("https://registry.npmjs.org/%s", p))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var parsed npmPackageMetaResponse
-	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
-		return nil, err
-	}
-
-	return &parsed, nil
 }

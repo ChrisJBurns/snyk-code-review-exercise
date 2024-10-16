@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPackageHandler(t *testing.T) {
+func TestPackageHandlerWithExistingPackageAndVersion(t *testing.T) {
 	handler := api.New()
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -40,4 +40,28 @@ func TestPackageHandler(t *testing.T) {
 	require.Nil(t, json.NewDecoder(fixture).Decode(&fixtureObj))
 
 	assert.Equal(t, fixtureObj, data)
+}
+
+func TestPackageHandlerWithExistingPackageButNonExistingVersion(t *testing.T) {
+	handler := api.New()
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, err := server.Client().Get(server.URL + "/package/react/100.0.0")
+	require.Nil(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestPackageHandlerWithNonExistingPackage(t *testing.T) {
+	handler := api.New()
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, err := server.Client().Get(server.URL + "/package/ahdhfdhhfdhfg/1.0.0")
+	require.Nil(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
