@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"sync"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/gorilla/mux"
@@ -40,12 +41,16 @@ func packageHandler(w http.ResponseWriter, r *http.Request) {
 	pkgVersion := vars["version"]
 
 	rootPkg := &NpmPackageVersion{Name: pkgName, Dependencies: map[string]*NpmPackageVersion{}}
-	depCache := map[string]*NpmPackageVersion{}
-	if err := fetchAndResolveDependencies(depCache, rootPkg, pkgVersion); err != nil {
+	// depCache := map[string]*NpmPackageVersion{}
+	var depCacheSync sync.Map
+	var wg sync.WaitGroup
+	if err := fetchAndResolveDependencies(&depCacheSync, rootPkg, pkgVersion, &wg); err != nil {
 		println(err.Error())
 		w.WriteHeader(500)
 		return
 	}
+
+	wg.Wait()
 
 	stringified, err := json.MarshalIndent(rootPkg, "", "  ")
 	if err != nil {
@@ -61,8 +66,10 @@ func packageHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(stringified)
 }
 
-func fetchAndResolveDependencies(depCache map[string]*NpmPackageVersion, pkg *NpmPackageVersion, versionConstraint string) error {
-	if p, ok := depCache[pkg.Name+"-"+versionConstraint]; ok {
+func fetchAndResolveDependencies(depCacheSync *sync.Map, pkg *NpmPackageVersion, versionConstraint string, wg *sync.WaitGroup) error {
+	if cachedDep, ok := depCacheSync.Load(pkg.Name + "-" + versionConstraint); ok {
+		fmt.Printf("dep found: %v \n", pkg.Name+"-"+versionConstraint)
+		p := cachedDep.(*NpmPackageVersion)
 		pkg.Version = p.Version
 		pkg.Name = p.Name
 		pkg.Dependencies = p.Dependencies
@@ -74,25 +81,31 @@ func fetchAndResolveDependencies(depCache map[string]*NpmPackageVersion, pkg *Np
 		return err
 	}
 
-	resolveDependencies(depCache, pkg, npmPkg)
+	wg.Add(1)
+	go resolveDependencies(depCacheSync, pkg, npmPkg, wg)
 	return nil
 }
 
-func resolveDependencies(depCache map[string]*NpmPackageVersion, pkg *NpmPackageVersion, npmPkg npmPackageResponse) error {
-	depCache[npmPkg.Name+"-"+npmPkg.Version] = &NpmPackageVersion{
+func resolveDependencies(depCacheSync *sync.Map, pkg *NpmPackageVersion, npmPkg npmPackageResponse, wg *sync.WaitGroup) error {
+	defer wg.Done()
+	depCacheSync.Store(npmPkg.Name+"-"+npmPkg.Version, &NpmPackageVersion{
 		Name:         npmPkg.Name,
 		Version:      npmPkg.Version,
 		Dependencies: make(map[string]*NpmPackageVersion),
-	}
+	},
+	)
 
 	for dependencyName, dependencyVersionConstraint := range npmPkg.Dependencies {
 		dep := &NpmPackageVersion{Name: dependencyName, Dependencies: map[string]*NpmPackageVersion{}}
 		pkg.Dependencies[dependencyName] = dep
-		if err := fetchAndResolveDependencies(depCache, dep, dependencyVersionConstraint); err != nil {
+		if err := fetchAndResolveDependencies(depCacheSync, dep, dependencyVersionConstraint, wg); err != nil {
 			return err
 		}
 
-		depCache[npmPkg.Name+"-"+npmPkg.Version].Dependencies[dep.Name] = dep
+		if depCacheEntry, ok := depCacheSync.Load(npmPkg.Name + "-" + npmPkg.Version); ok {
+			depCacheEntryDependencies := depCacheEntry.(*NpmPackageVersion)
+			depCacheEntryDependencies.Dependencies[dep.Name] = dep
+		}
 	}
 
 	return nil
