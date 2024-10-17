@@ -20,7 +20,7 @@
     },
     "prop-types": {
       "name": "prop-types",
-      "version": "15.7.2",
+      "version": "15.8.1",
       "dependencies": {
         "loose-envify": {
           "name": "loose-envify",
