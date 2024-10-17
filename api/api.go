@@ -40,8 +40,8 @@ func packageHandler(w http.ResponseWriter, r *http.Request) {
 	pkgVersion := vars["version"]
 
 	rootPkg := &NpmPackageVersion{Name: pkgName, Dependencies: map[string]*NpmPackageVersion{}}
-	depCache := map[string]*npmPackageResponse{}
-	if err := resolveDependencies(depCache, rootPkg, pkgVersion); err != nil {
+	depCache := map[string]*NpmPackageVersion{}
+	if err := fetchAndResolveDependencies(depCache, rootPkg, pkgVersion); err != nil {
 		println(err.Error())
 		w.WriteHeader(500)
 		return
@@ -61,33 +61,38 @@ func packageHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(stringified)
 }
 
-func resolveDependencies(depCache map[string]*npmPackageResponse, pkg *NpmPackageVersion, versionConstraint string) error {
+func fetchAndResolveDependencies(depCache map[string]*NpmPackageVersion, pkg *NpmPackageVersion, versionConstraint string) error {
 	if p, ok := depCache[pkg.Name+"-"+versionConstraint]; ok {
 		pkg.Version = p.Version
-
-		for dependencyName, dependencyVersionConstraint := range p.Dependencies {
-			dep := &NpmPackageVersion{Name: dependencyName, Dependencies: map[string]*NpmPackageVersion{}}
-			pkg.Dependencies[dependencyName] = dep
-			if err := resolveDependencies(depCache, dep, dependencyVersionConstraint); err != nil {
-				return err
-			}
-		}
+		pkg.Name = p.Name
+		pkg.Dependencies = p.Dependencies
 		return nil
 	}
 
-	var npmPkg npmPackageResponse
 	npmPkg, err := fetch(pkg, versionConstraint)
 	if err != nil {
 		return err
 	}
-	depCache[pkg.Name+"-"+versionConstraint] = &npmPkg
+
+	resolveDependencies(depCache, pkg, npmPkg)
+	return nil
+}
+
+func resolveDependencies(depCache map[string]*NpmPackageVersion, pkg *NpmPackageVersion, npmPkg npmPackageResponse) error {
+	depCache[npmPkg.Name+"-"+npmPkg.Version] = &NpmPackageVersion{
+		Name:         npmPkg.Name,
+		Version:      npmPkg.Version,
+		Dependencies: make(map[string]*NpmPackageVersion),
+	}
 
 	for dependencyName, dependencyVersionConstraint := range npmPkg.Dependencies {
 		dep := &NpmPackageVersion{Name: dependencyName, Dependencies: map[string]*NpmPackageVersion{}}
 		pkg.Dependencies[dependencyName] = dep
-		if err := resolveDependencies(depCache, dep, dependencyVersionConstraint); err != nil {
+		if err := fetchAndResolveDependencies(depCache, dep, dependencyVersionConstraint); err != nil {
 			return err
 		}
+
+		depCache[npmPkg.Name+"-"+npmPkg.Version].Dependencies[dep.Name] = dep
 	}
 
 	return nil
@@ -105,7 +110,6 @@ func fetch(pkg *NpmPackageVersion, versionConstraint string) (npmPackageResponse
 	}
 	pkg.Version = concreteVersion
 
-	// os.Exit(0)
 	npmPkg, err := fetchPackage(pkg.Name, pkg.Version)
 	if err != nil {
 		return npmPackageResponse{}, err
@@ -120,7 +124,6 @@ func highestCompatibleVersion(constraintStr string, versions *npmPackageMetaResp
 	}
 	filtered := filterCompatibleVersions(constraint, versions)
 	sort.Sort(filtered)
-	// fmt.Printf("%v \n", filtered)
 	if len(filtered) == 0 {
 		return "", errors.New("no compatible versions found")
 	}
@@ -139,7 +142,6 @@ func filterCompatibleVersions(constraint *semver.Constraints, pkgMeta *npmPackag
 		}
 	}
 
-	// fmt.Printf("%v \n", compatible)
 	return compatible
 }
 
