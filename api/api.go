@@ -62,10 +62,8 @@ func packageHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func resolveDependencies(depCache map[string]*npmPackageResponse, pkg *NpmPackageVersion, versionConstraint string) error {
-	var npmPkg npmPackageResponse
 	if p, ok := depCache[pkg.Name+"-"+versionConstraint]; ok {
-
-		fmt.Printf("Dep found in cache: %s \n", p.Name+"-"+versionConstraint)
+		pkg.Version = p.Version
 
 		for dependencyName, dependencyVersionConstraint := range p.Dependencies {
 			dep := &NpmPackageVersion{Name: dependencyName, Dependencies: map[string]*NpmPackageVersion{}}
@@ -77,6 +75,7 @@ func resolveDependencies(depCache map[string]*npmPackageResponse, pkg *NpmPackag
 		return nil
 	}
 
+	var npmPkg npmPackageResponse
 	npmPkg, err := fetch(pkg, versionConstraint)
 	if err != nil {
 		return err

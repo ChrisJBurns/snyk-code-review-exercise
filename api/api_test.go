@@ -41,3 +41,31 @@ func TestPackageHandler(t *testing.T) {
 
 	assert.Equal(t, fixtureObj, data)
 }
+
+func TestPackageHandlerWithExpress(t *testing.T) {
+	handler := api.New()
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, err := server.Client().Get(server.URL + "/package/express/4.21.0")
+	require.Nil(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.Nil(t, err)
+
+	var data api.NpmPackageVersion
+	err = json.Unmarshal(body, &data)
+	require.Nil(t, err)
+
+	assert.Equal(t, "express", data.Name)
+	assert.Equal(t, "4.21.0", data.Version)
+
+	fixture, err := os.Open(filepath.Join("testdata", "express-4.21.0.json"))
+	require.Nil(t, err)
+	var fixtureObj api.NpmPackageVersion
+	require.Nil(t, json.NewDecoder(fixture).Decode(&fixtureObj))
+
+	assert.Equal(t, fixtureObj, data)
+}
