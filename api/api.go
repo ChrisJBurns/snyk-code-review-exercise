@@ -49,6 +49,9 @@ func (sm *SafeMap) Load(key string) (*NpmPackageVersion, bool) {
 func (sm *SafeMap) Store(key string, value *NpmPackageVersion) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	if sm.m == nil {
+		sm.m = make(map[string]*NpmPackageVersion)
+	}
 	sm.m[key] = value
 }
 
@@ -128,15 +131,36 @@ func fetchAndResolveDependencies(safeMapCache *SafeMap, pkg *NpmPackageVersion, 
 
 func resolveDependencies(safeMapCache *SafeMap, pkg *NpmPackageVersion, npmPkg npmPackageResponse, wg *sync.WaitGroup) error {
 	defer wg.Done()
-	for depName, depVersionConstraint := range npmPkg.Dependencies {
-		dep := &NpmPackageVersion{Name: depName, Dependencies: map[string]*NpmPackageVersion{}}
-		pkg.Dependencies[depName] = dep
-		if err := fetchAndResolveDependencies(safeMapCache, dep, depVersionConstraint, wg); err != nil {
-			return err
+
+	key := npmPkg.Name + "-" + npmPkg.Version
+	if _, ok := safeMapCache.Load(key); !ok {
+		safeMapCache.Store(key, &NpmPackageVersion{
+			Name:         npmPkg.Name,
+			Version:      npmPkg.Version,
+			Dependencies: make(map[string]*NpmPackageVersion),
+		})
+
+		for depName, depVersionConstraint := range npmPkg.Dependencies {
+			dep := &NpmPackageVersion{Name: depName, Dependencies: map[string]*NpmPackageVersion{}}
+			pkg.Dependencies[depName] = dep
+			if err := fetchAndResolveDependencies(safeMapCache, dep, depVersionConstraint, wg); err != nil {
+				return err
+			}
+			safeMapCache.StoreDependency(npmPkg, dep.Name, dep)
 		}
-		safeMapCache.StoreDependency(npmPkg, dep.Name, dep)
+		return nil
 	}
 	return nil
+
+	// for depName, depVersionConstraint := range npmPkg.Dependencies {
+	// 	dep := &NpmPackageVersion{Name: depName, Dependencies: map[string]*NpmPackageVersion{}}
+	// 	pkg.Dependencies[depName] = dep
+	// 	if err := fetchAndResolveDependencies(safeMapCache, dep, depVersionConstraint, wg); err != nil {
+	// 		return err
+	// 	}
+	// 	safeMapCache.StoreDependency(npmPkg, dep.Name, dep)
+	// }
+	// return nil
 }
 
 func fetch(pkg *NpmPackageVersion, versionConstraint string) (npmPackageResponse, error) {
