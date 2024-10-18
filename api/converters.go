@@ -6,12 +6,14 @@ import (
 	"io"
 )
 
-type Converter struct{}
+type Converter struct {
+	Read io.Reader
+}
 
-func (c *Converter) Unmarshall(bodyResponse io.ReadCloser, parsedStructure interface{}) error {
+func (c *Converter) Unmarshall(bodyResponse io.Reader, parsedStructure interface{}) error {
 	body, err := io.ReadAll(bodyResponse)
 	if err != nil {
-		return fmt.Errorf("Error reading response body: %v", err)
+		return fmt.Errorf("Error: %v", err)
 	}
 
 	if err := json.Unmarshal([]byte(body), &parsedStructure); err != nil {

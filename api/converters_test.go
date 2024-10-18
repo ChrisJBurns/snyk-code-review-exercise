@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -28,4 +29,21 @@ func TestConversionFromJsonToDataStructure(t *testing.T) {
 		LastName:  "Burns",
 	}
 	assert.Equal(t, &testStructure, expected)
+}
+
+func TestConversionFromJsonToDataStructureWithErrorReadingResponseBody(t *testing.T) {
+	converter := &api.Converter{
+		Read: &StubRead{},
+	}
+
+	err := converter.Unmarshall(converter.Read, nil)
+	assert.NotNil(t, err)
+	assert.Equal(t, "Error: error reading response body", err.Error())
+}
+
+type StubRead struct {
+}
+
+func (s *StubRead) Read(p []byte) (n int, err error) {
+	return 0, errors.New("error reading response body")
 }
